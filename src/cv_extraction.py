@@ -86,11 +86,7 @@ class CVData:
     """Structured CV data container."""
     raw_text: str
     skills: List[str]
-    skills_raw: str  # Raw skills section text
-    summary: str
     total_experience_years: float  # 0 if not determined
-    experience_details: List[Dict]
-    sections_found: List[str]
 
 
 # ============================================================================
@@ -342,8 +338,7 @@ def extract_experience_from_summary(summary_text: str) -> Tuple[Optional[float],
 def extract_experience_from_dates(experience_text: str) -> Tuple[Optional[float], List[Dict]]:
     """
     Extract years of experience from experience section date ranges.
-    - If "present" found: present_date - min_start_date
-    - Otherwise: max_end_date - min_start_date
+    Sums individual job durations and handles overlapping periods.
     """
     if not experience_text:
         return None, []
@@ -359,18 +354,17 @@ def extract_experience_from_dates(experience_text: str) -> Tuple[Optional[float]
     if not date_matches:
         return None, []
     
-    current_year = 2025  # Update as needed
-    start_years = []
-    end_years = []
-    has_present = False
+    current_year = 2025
+    job_periods = []  # List of (start_year, end_year) tuples
     
     for match in date_matches:
         start_year = int(match[0])
         end_part = match[1].strip()
         
         # Check if end date is "present", "current", or "now"
-        if any(word in end_part.lower() for word in ['present', 'current', 'now']):
-            has_present = True
+        is_current = any(word in end_part.lower() for word in ['present', 'current', 'now'])
+        
+        if is_current:
             end_year = current_year
         else:
             # Extract the year from the end part
@@ -381,29 +375,32 @@ def extract_experience_from_dates(experience_text: str) -> Tuple[Optional[float]
                 continue  # Skip if no valid end year
         
         # Sanity check
-        if 1950 < start_year <= current_year and 1950 < end_year <= current_year:
-            start_years.append(start_year)
-            end_years.append(end_year)
+        if 1950 < start_year <= current_year and 1950 < end_year <= current_year and start_year <= end_year:
+            job_periods.append((start_year, end_year))
             experience_details.append({
                 "type": "date_range",
                 "start": start_year,
-                "end": end_year if not has_present else "present",
+                "end": "present" if is_current else end_year,
                 "years": end_year - start_year
             })
     
-    if not start_years:
+    if not job_periods:
         return None, []
     
-    min_start = min(start_years)
+    # Merge overlapping periods to avoid double-counting
+    job_periods.sort(key=lambda x: x[0])  # Sort by start year
+    merged_periods = []
     
-    # Calculate total experience
-    if has_present:
-        # present_date - min_start_date
-        total_years = current_year - min_start
-    else:
-        # max_end_date - min_start_date
-        max_end = max(end_years)
-        total_years = max_end - min_start
+    for start, end in job_periods:
+        if merged_periods and start <= merged_periods[-1][1]:
+            # Overlapping - extend the previous period if needed
+            merged_periods[-1] = (merged_periods[-1][0], max(merged_periods[-1][1], end))
+        else:
+            # No overlap - add new period
+            merged_periods.append((start, end))
+    
+    # Calculate total experience from merged periods
+    total_years = sum(end - start for start, end in merged_periods)
     
     return total_years if total_years > 0 else None, experience_details
 
@@ -460,7 +457,6 @@ def extract_cv_data(file_path: str) -> CVData:
     
     # Step 1: Find all section boundaries
     section_boundaries = find_section_boundaries(raw_text)
-    sections_found = list(set(s[0] for s in section_boundaries))
     
     # Step 2: Extract content from each boundary
     sections_content = extract_sections_from_boundaries(raw_text, section_boundaries)
@@ -469,34 +465,16 @@ def extract_cv_data(file_path: str) -> CVData:
     skills_raw = sections_content.get("skills", "")
     skills = parse_skills_from_section(skills_raw)
     
-    # Step 4: Get summary/about section
+    # Step 4: Get summary and experience sections for experience calculation
     summary = sections_content.get("summary", "")
-    
-    # Step 5: Get experience section
     experience_section = sections_content.get("experience", "")
     
-    # Step 6: Extract years of experience using two-part strategy:
+    # Step 5: Extract years of experience using two-part strategy:
     # 1. Check summary first, 2. Calculate from experience dates
-    total_exp, exp_details = extract_years_of_experience(summary, experience_section)
+    total_exp, _ = extract_years_of_experience(summary, experience_section)
     
     return CVData(
         raw_text=raw_text,
         skills=skills,
-        skills_raw=skills_raw,
-        summary=summary,
-        total_experience_years=total_exp,
-        experience_details=exp_details,
-        sections_found=sections_found
+        total_experience_years=total_exp
     )
-
-
-def getCV_Data():
-    cv_path = r"..\Ahmed_Emad_DataScientist.pdf"
-    
-    try:
-        cv_data = extract_cv_data(cv_path)
-        return cv_data
-    
-        
-    except Exception as e:
-        print(f"Error: {e}")
