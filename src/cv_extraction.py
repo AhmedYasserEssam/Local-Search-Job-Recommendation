@@ -59,6 +59,11 @@ SECTION_PATTERNS = {
         r"(?i)^[\s]*licenses?\s*(?:&|and)?\s*certifications?[\s]*:?[\s]*$",
         r"(?i)^[\s]*professional\s+certifications?[\s]*:?[\s]*$",
     ],
+    "volunteering": [
+        r"(?i)^[\s]*volunteer(?:ing)?(?:\s+(?:experience|work))?[\s]*:?[\s]*$",
+        r"(?i)^[\s]*community\s+(?:service|involvement)[\s]*:?[\s]*$",
+        r"(?i)^[\s]*(?:volunteer|civic)\s+activities[\s]*:?[\s]*$",
+    ],
 }
 
 # All section keywords for boundary detection
@@ -71,7 +76,8 @@ ALL_SECTION_KEYWORDS = [
     "certifications", "licenses",
     "achievements", "awards", "honors",
     "languages", "interests", "hobbies",
-    "references", "publications", "courses"
+    "references", "publications", "courses",
+    "volunteering", "volunteer", "community service", "civic activities"
 ]
 
 
@@ -150,7 +156,7 @@ def extract_text(file_path: str) -> str:
 def find_section_boundaries(text: str) -> List[Tuple[str, int, int]]:
     """
     Find all section headers and their positions in the text.
-    Returns list of (section_type, start_pos, end_pos).
+    Returns list of (section_type, line_index, char_pos).
     """
     lines = text.split('\n')
     sections = []
@@ -172,63 +178,64 @@ def find_section_boundaries(text: str) -> List[Tuple[str, int, int]]:
     return sections
 
 
+def extract_sections_from_boundaries(text: str, boundaries: List[Tuple[str, int, int]]) -> Dict[str, str]:
+    """
+    Extract content from each section based on the boundaries found.
+    
+    Args:
+        text: The full CV text
+        boundaries: List of (section_type, line_index, char_pos) from find_section_boundaries
+    
+    Returns:
+        Dictionary mapping section_type to its content
+    """
+    if not boundaries:
+        return {}
+    
+    lines = text.split('\n')
+    sections_content = {}
+    
+    # Sort boundaries by line index to ensure proper ordering
+    sorted_boundaries = sorted(boundaries, key=lambda x: x[1])
+    
+    for i, (section_type, line_idx, _) in enumerate(sorted_boundaries):
+        # Content starts after the header line
+        content_start = line_idx + 1
+        
+        # Content ends at the next section's header or end of document
+        if i + 1 < len(sorted_boundaries):
+            content_end = sorted_boundaries[i + 1][1]
+        else:
+            content_end = len(lines)
+        
+        # Extract and clean the content
+        content_lines = lines[content_start:content_end]
+        content = '\n'.join(line for line in content_lines if line.strip())
+        
+        # If section type already exists, append (handles multiple sections of same type)
+        if section_type in sections_content:
+            sections_content[section_type] += '\n' + content.strip()
+        else:
+            sections_content[section_type] = content.strip()
+    
+    return sections_content
+
+
 def extract_section_content(text: str, section_type: str) -> str:
     """
     Extract content of a specific section from CV text.
-    Finds the section header and extracts until the next section.
+    Uses find_section_boundaries for consistent section detection.
+    
+    Args:
+        text: The full CV text
+        section_type: The type of section to extract (e.g., "skills", "summary")
+    
+    Returns:
+        The content of the specified section, or empty string if not found
     """
-    lines = text.split('\n')
-    
-    # Find where our target section starts
-    section_start = None
-    for i, line in enumerate(lines):
-        line_stripped = line.strip()
-        if not line_stripped:
-            continue
-            
-        for pattern in SECTION_PATTERNS.get(section_type, []):
-            if re.match(pattern, line_stripped):
-                section_start = i + 1  # Content starts after header
-                break
-        if section_start:
-            break
-    
-    if section_start is None:
-        return ""
-    
-    # Find where the next section starts (end of our section)
-    section_end = len(lines)
-    for i in range(section_start, len(lines)):
-        line_stripped = lines[i].strip()
-        if not line_stripped:
-            continue
-            
-        # Check if this line is a section header
-        is_header = False
-        for patterns in SECTION_PATTERNS.values():
-            for pattern in patterns:
-                if re.match(pattern, line_stripped):
-                    is_header = True
-                    break
-            if is_header:
-                break
-        
-        # Also check for common section-like headers by format
-        # (All caps, ends with colon, short line that looks like a header)
-        if not is_header:
-            if (line_stripped.isupper() and len(line_stripped) < 50 and 
-                any(kw in line_stripped.lower() for kw in ALL_SECTION_KEYWORDS)):
-                is_header = True
-        
-        if is_header:
-            section_end = i
-            break
-    
-    # Extract and clean the content
-    content_lines = lines[section_start:section_end]
-    content = '\n'.join(line for line in content_lines if line.strip())
-    
-    return content.strip()
+    boundaries = find_section_boundaries(text)
+    sections_content = extract_sections_from_boundaries(text, boundaries)
+    return sections_content.get(section_type, "")
 
 
 # ============================================================================
@@ -439,6 +446,9 @@ def extract_cv_data(file_path: str) -> CVData:
     """
     Main function to extract structured data from a CV.
     
+    Uses find_section_boundaries to identify all sections, then extracts
+    content from each boundary. Skills are extracted ONLY from the skills section.
+    
     Args:
         file_path: Path to the CV file (.pdf or .docx)
     
@@ -447,22 +457,25 @@ def extract_cv_data(file_path: str) -> CVData:
     """
     # Extract raw text
     raw_text = extract_text(file_path)
-    print(raw_text[:2000])  # Print first 2000 chars to see the structure
-    # Find which sections exist
+    
+    # Step 1: Find all section boundaries
     section_boundaries = find_section_boundaries(raw_text)
     sections_found = list(set(s[0] for s in section_boundaries))
     
-    # Extract Skills Section
-    skills_raw = extract_section_content(raw_text, "skills")
+    # Step 2: Extract content from each boundary
+    sections_content = extract_sections_from_boundaries(raw_text, section_boundaries)
+    
+    # Step 3: Get skills ONLY from the skills section
+    skills_raw = sections_content.get("skills", "")
     skills = parse_skills_from_section(skills_raw)
     
-    # Extract Summary/About Section
-    summary = extract_section_content(raw_text, "summary")
+    # Step 4: Get summary/about section
+    summary = sections_content.get("summary", "")
     
-    # Extract Experience Section
-    experience_section = extract_section_content(raw_text, "experience")
+    # Step 5: Get experience section
+    experience_section = sections_content.get("experience", "")
     
-    # Extract Experience using two-part strategy:
+    # Step 6: Extract years of experience using two-part strategy:
     # 1. Check summary first, 2. Calculate from experience dates
     total_exp, exp_details = extract_years_of_experience(summary, experience_section)
     
