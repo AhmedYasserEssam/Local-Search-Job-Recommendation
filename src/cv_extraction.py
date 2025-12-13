@@ -490,66 +490,13 @@ def extract_cv_data(file_path: str) -> CVData:
     )
 
 
-# ============================================================================
-# UTILITY FUNCTIONS
-# ============================================================================
-
-def print_cv_data(cv_data: CVData):
-    """Pretty print extracted CV data."""
-    print("=" * 60)
-    print("CV EXTRACTION RESULTS")
-    print("=" * 60)
-    
-    print(f"\n📋 SECTIONS FOUND: {', '.join(cv_data.sections_found) if cv_data.sections_found else 'None detected'}")
-    
-    print(f"\n📝 SUMMARY/ABOUT:")
-    print("-" * 40)
-    if cv_data.summary:
-        print(cv_data.summary[:500] + "..." if len(cv_data.summary) > 500 else cv_data.summary)
-    else:
-        print("No summary section found")
-    
-    print(f"\n💼 SKILLS ({len(cv_data.skills)} found):")
-    print("-" * 40)
-    if cv_data.skills:
-        # Print in columns
-        for i, skill in enumerate(cv_data.skills):
-            print(f"  • {skill}")
-    else:
-        print("No skills section found")
-    
-    print(f"\n⏱️ EXPERIENCE:")
-    print("-" * 40)
-    print(f"  Total Years: {cv_data.total_experience_years}")
-    
-    if cv_data.experience_details:
-        print("\n  Details found:")
-        for detail in cv_data.experience_details[:5]:  # Show first 5
-            if detail["type"] == "date_range":
-                print(f"    • {detail['start']} - {detail['end']} ({detail['years']} years)")
-            else:
-                print(f"    • {detail['years']} years mentioned")
-    
-    print("\n" + "=" * 60)
-
-
-# ============================================================================
-# EXAMPLE USAGE
-# ============================================================================
-
-if __name__ == "__main__":
-    # Test with your CV
-    cv_path = r"C:\Work\Ai Project\Ahmed_Emad_DataScientist.pdf"
+def getCV_Data():
+    cv_path = r"..\Ahmed_Emad_DataScientist.pdf"
     
     try:
         cv_data = extract_cv_data(cv_path)
-        print_cv_data(cv_data)
-        
-        # Access individual fields
-        print("\n\n--- PROGRAMMATIC ACCESS ---")
-        print(f"Skills list: {cv_data.skills}")
-        print(f"Experience: {cv_data.total_experience_years} years")
-        print(f"Summary: {cv_data.summary[:100]}..." if cv_data.summary else "No summary")
+        return cv_data
+    
         
     except Exception as e:
         print(f"Error: {e}")
