@@ -64,19 +64,22 @@ class CVData:
 
 def extract_text(file_path: str) -> str:
     def from_pdf():
+        doc = None
         try:
             doc = fitz.open(file_path)
             text = ""
 
             for page in doc:
                 text += page.get_text("text") + "\n"
-            doc.close()
             
             return text.strip()
         except FileNotFoundError:
-            raise FileNotFoundError(f"PDF file not found: {file_path}")
+            raise FileNotFoundError(f"PDF file not found.")
         except Exception as e:
             raise ValueError(f"Failed to extract text from PDF: {e}")
+        finally:
+            if doc is not None:
+                doc.close()
 
     def from_docx():
         try:
@@ -98,7 +101,7 @@ def extract_text(file_path: str) -> str:
             
             return "\n".join(text_parts)
         except FileNotFoundError:
-            raise FileNotFoundError(f"DOCX file not found: {file_path}")
+            raise FileNotFoundError(f"DOCX file not found.")
         except Exception as e:
             raise ValueError(f"Failed to extract text from DOCX: {e}")
 
@@ -157,7 +160,7 @@ def extract_sections(text: str) -> Dict[str, str]:
         
         return sections_content
     except AttributeError:
-        raise TypeError(f"Expected string input, got {type(text).__name__}")
+        raise TypeError(f"Expected string input, got {type(text).__name__}.")
     except Exception as e:
         raise ValueError(f"Failed to extract sections from text: {e}")
 
@@ -166,37 +169,41 @@ def parse_skills_from_section(skills_text: str) -> List[str]:
     if not skills_text:
         return []
     
-    skills = []
-    
-    delimiters = r'[,;|•·▪▸►➤✓✔★●○◦\n\t]|\s{2,}|(?<=[a-z])(?=[A-Z])'
-    
-    category_pattern = r'([A-Za-z\s&/]+):\s*(.+?)(?=(?:[A-Za-z\s&/]+:|$))'
-    category_matches = re.findall(category_pattern, skills_text, re.DOTALL)
-    
-    if category_matches:
-        for category, skill_list in category_matches:
-            parts = re.split(r'[,;|•·\n]+', skill_list)
+        skills = []
+        
+        delimiters = r'[,;|•·▪▸►➤✓✔★●○◦\n\t]|\s{2,}|(?<=[a-z])(?=[A-Z])'
+        
+        category_pattern = r'([A-Za-z\s&/]+):\s*(.+?)(?=(?:[A-Za-z\s&/]+:|$))'
+        category_matches = re.findall(category_pattern, skills_text, re.DOTALL)
+        
+        if category_matches:
+            for category, skill_list in category_matches:
+                parts = re.split(r'[,;|•·\n]+', skill_list)
+                for part in parts:
+                    cleaned = part.strip()
+                    if cleaned and len(cleaned) > 1 and len(cleaned) < 50:
+                        skills.append(cleaned)
+        else:
+            parts = re.split(delimiters, skills_text)
             for part in parts:
-                cleaned = part.strip()
+                cleaned = part.strip().strip('-').strip('•').strip()
                 if cleaned and len(cleaned) > 1 and len(cleaned) < 50:
-                    skills.append(cleaned)
-    else:
-        parts = re.split(delimiters, skills_text)
-        for part in parts:
-            cleaned = part.strip().strip('-').strip('•').strip()
-            if cleaned and len(cleaned) > 1 and len(cleaned) < 50:
-                if cleaned.count(' ') < 5:
-                    skills.append(cleaned)
-    
-    seen = set()
-    unique_skills = []
-    for skill in skills:
-        skill_lower = skill.lower()
-        if skill_lower not in seen:
-            seen.add(skill_lower)
-            unique_skills.append(skill)
-    
-    return unique_skills
+                    if cleaned.count(' ') < 5:
+                        skills.append(cleaned)
+        
+        seen = set()
+        unique_skills = []
+        for skill in skills:
+            skill_lower = skill.lower()
+            if skill_lower not in seen:
+                seen.add(skill_lower)
+                unique_skills.append(skill)
+        
+        return unique_skills
+    except re.error as e:
+        raise ValueError(f"Regex error while parsing skills: {e}")
+    except Exception as e:
+        raise ValueError(f"Failed to parse skills: {e}")
 
 
 def extract_years_of_experience(summary_text: str, experience_text: str) -> float:
@@ -204,30 +211,36 @@ def extract_years_of_experience(summary_text: str, experience_text: str) -> floa
         if not summary_text:
             return None
         
-        summary_lower = summary_text.lower()
-        
-        patterns = [
-            r'(\d+)\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp)',
-            r'(?:experience|exp)(?:\s+of)?\s+(\d+)\+?\s*(?:years?|yrs?)',
-            r'worked\s+(?:for\s+)?(\d+)\+?\s*(?:years?|yrs?)',
-            r'(\d+)\+?\s*(?:years?|yrs?)\s+(?:as\s+)?(?:a\s+)?[a-zA-Z\s]+(?:developer|engineer|analyst|scientist|manager)',
-            r'over\s+(\d+)\s*(?:years?|yrs?)',
-        ]
-        
-        total_years = 0
-        for pattern in patterns:
-            matches = re.findall(pattern, summary_lower, re.IGNORECASE)
-            for match in matches:
-                years = int(match) if isinstance(match, str) else int(match[0])
-                total_years = max(total_years, years)
-        
-        return total_years if total_years > 0 else None
+        try:
+            summary_lower = summary_text.lower()
+            
+            patterns = [
+                r'(\d+)\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp)',
+                r'(?:experience|exp)(?:\s+of)?\s+(\d+)\+?\s*(?:years?|yrs?)',
+                r'worked\s+(?:for\s+)?(\d+)\+?\s*(?:years?|yrs?)',
+                r'(\d+)\+?\s*(?:years?|yrs?)\s+(?:as\s+)?(?:a\s+)?[a-zA-Z\s]+(?:developer|engineer|analyst|scientist|manager)',
+                r'over\s+(\d+)\s*(?:years?|yrs?)',
+            ]
+            
+            total_years = 0
+            for pattern in patterns:
+                matches = re.findall(pattern, summary_lower, re.IGNORECASE)
+                for match in matches:
+                    years = int(match) if isinstance(match, str) else int(match[0])
+                    total_years = max(total_years, years)
+            
+            return total_years if total_years > 0 else None
+        except re.error as e:
+            raise ValueError(f"Regex error while extracting years from summary: {e}")
+        except Exception as e:
+            raise ValueError(f"Failed to extract years from summary: {e}")
 
     def from_dates():
         if not experience_text:
             return None
         
-        text_lower = experience_text.lower()
+        try:
+            text_lower = experience_text.lower()
         
         date_pattern = r'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)?\.?\s*(\d{4})\s*[-–—to]+\s*((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)?\.?\s*(\d{4})|present|current|now)'
         
@@ -269,9 +282,13 @@ def extract_years_of_experience(summary_text: str, experience_text: str) -> floa
             else:
                 merged_periods.append((start, end))
         
-        total_years = sum(end - start for start, end in merged_periods)
-        
-        return total_years if total_years > 0 else None
+            total_years = sum(end - start for start, end in merged_periods)
+            
+            return total_years if total_years > 0 else None
+        except re.error as e:
+            raise ValueError(f"Regex error while extracting years from dates: {e}")
+        except Exception as e:
+            raise ValueError(f"Failed to extract years from dates: {e}")
 
     summary_years = from_summary()
     if summary_years is not None:
@@ -281,24 +298,40 @@ def extract_years_of_experience(summary_text: str, experience_text: str) -> floa
     return exp_years if exp_years is not None else 0
 
 
-def extract_cv_data(file_path: str) -> CVData:
-    if not file_path:
-        raise ValueError("File path is required")
-    
-    raw_text = extract_text(file_path)
-    
-    sections_content = extract_sections(raw_text)
-    
-    skills_raw = sections_content.get("skills", "")
-    skills = parse_skills_from_section(skills_raw)
-    
-    summary_section = sections_content.get("summary", "")
-    experience_section = sections_content.get("experience", "")
-    
-    total_exp = extract_years_of_experience(summary_section, experience_section)
-    
+def extract_cv_data(file_path: str) -> CVData:    
+    try:
+        raw_text = extract_text(file_path)
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"CV file not found.") from e
+    except Exception as e:
+        raise RuntimeError(f"Failed to extract text from CV file") from e
+
+    if not raw_text.strip():
+        raise ValueError("CV file is empty or contains no readable text.")
+
+    try:
+        sections_content = extract_sections(raw_text)
+    except Exception as e:
+        raise RuntimeError(f"Failed to extract sections from CV.") from e
+
+    if not isinstance(sections_content, dict):
+        raise RuntimeError(f"Unexpected sections format extracted from CV.")
+
+    try:
+        skills_raw = sections_content.get("skills", "")
+        skills = parse_skills_from_section(skills_raw)
+    except Exception as e:
+        raise RuntimeError(f"Failed to parse skills from CV.") from e
+
+    try:
+        summary_section = sections_content.get("summary", "")
+        experience_section = sections_content.get("experience", "")
+        total_exp = extract_years_of_experience(summary_section, experience_section)
+    except Exception as e:
+        raise RuntimeError(f"Failed to extract years of experience from CV.") from e
+
     return CVData(
-        raw_text = raw_text,
-        skills = skills,
-        experience_years = total_exp
+        raw_text=raw_text,
+        skills=skills,
+        experience_years=float(total_exp),
     )
