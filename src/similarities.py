@@ -14,9 +14,9 @@ def calculate_similarity(cv_data: CVData, job: Job) -> float:
     exp_score = experience_similarity(cv_data.experience_years, job.experience_needed)
     
     final_score = (
-        0.50 * semantic_score +
-        0.35 * skill_score +
-        0.15 * exp_score
+        0.40 * semantic_score +
+        0.40 * skill_score +
+        0.20 * exp_score
     ) * 100
     
     return final_score
@@ -44,4 +44,9 @@ def skill_similarity(cv_skills: List[str], job_skills: List[str]) -> float:
 def experience_similarity(cv_years: float, jd_years: int) -> float:
     if jd_years == 0:
         return 1.0
-    return min(cv_years / jd_years, 1.0)
+    
+    if cv_years >= jd_years:
+        return 1.0
+    else:
+        ratio = cv_years / jd_years
+        return ratio ** 0.7
