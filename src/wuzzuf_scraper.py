@@ -88,7 +88,7 @@ def scrape_job_listings(job_name: str, page_limit: int = 1) -> List[Job]:
 
 
 def scrape_job_details(jobs: List[Job]) -> List[Job]:
-    with open("src/utils/job_details_extractor.js", "r", encoding="utf-8") as f:
+    with open("utils/job_details_extractor.js", "r", encoding="utf-8") as f:
         extract_script = f.read() + "\nreturn extractJobDetails();"
 
     if not jobs:
