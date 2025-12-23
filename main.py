@@ -1,174 +1,264 @@
 import sys
 import os
+import webbrowser
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QFileDialog, QMessageBox, 
-                             QGraphicsOpacityEffect)
-from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QTimer, QPoint
-from PyQt6.QtGui import QFont, QColor
+                             QGraphicsOpacityEffect, QStackedWidget, QFrame, 
+                             QGridLayout, QScrollArea, QDialog, QHBoxLayout)
+from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QThread, pyqtSignal
+from PyQt6.QtGui import QFont, QCursor
 
-class AnimatedWelcomePage(QWidget):
+# --- Your Project Imports ---
+from src.cv_extraction import extract_cv_data
+from src.wuzzuf_scraper import scrape_jobs
+from src.search_space import JobSearchSpace
+from src.search_algorithms import hill_climbing, simulated_annealing, local_beam_search, tabu_search
+from src.job import Job
+
+# --- 1. Background Worker ---
+class JobSearchWorker(QThread):
+    finished = pyqtSignal(list)
+
+    def __init__(self, job_title, cv_path):
+        super().__init__()
+        self.job_title = job_title
+        self.cv_path = cv_path
+
+    def run(self):
+        # Your specific backend logic
+        scrapped_list = scrape_jobs(self.job_title, 2)
+        extracted_cv = extract_cv_data(self.cv_path)
+        search_space = JobSearchSpace(scrapped_list, extracted_cv)
+
+        # Run all algorithms
+        results = []
+        results.extend(hill_climbing(search_space))
+        results.extend(simulated_annealing(search_space))
+        results.extend(local_beam_search(search_space))
+        results.extend(tabu_search(search_space))
+
+        # Filter unique results and return top 4
+        unique_jobs = list({job.link: job for job in results if job.link != "N/A"}.values())
+        self.finished.emit(unique_jobs[:4])
+
+# --- 2. Detail Dialog ---
+class JobDetailDialog(QDialog):
+    def __init__(self, job: Job, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Job Details")
+        self.setFixedSize(450, 500)
+        self.setStyleSheet("background-color: #1a1a2e; color: white;")
+        
+        layout = QVBoxLayout(self)
+        
+        # Details Header
+        title = QLabel(job.title)
+        title.setFont(QFont("Inter", 18, QFont.Weight.Bold))
+        title.setWordWrap(True)
+        
+        company = QLabel(f"🏢 {job.company} | 📍 {job.city}, {job.country}")
+        company.setStyleSheet("color: #a29bfe; font-size: 14px;")
+
+        # Scrollable Info
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border: none; background: transparent;")
+        info_widget = QWidget()
+        info_layout = QVBoxLayout(info_widget)
+        
+        details_text = f"""
+        <b>Type:</b> {job.job_type}<br>
+        <b>Salary:</b> {job.salary}<br>
+        <b>Experience:</b> {job.experience_needed} years<br>
+        <b>Career Level:</b> {job.career_level}<br><br>
+        <b>Skills:</b><br>{", ".join(job.skills) if job.skills else "Not specified"}<br><br>
+        <b>Requirements:</b><br>{job.requirements}
+        """
+        body = QLabel(details_text)
+        body.setWordWrap(True)
+        body.setStyleSheet("font-size: 13px; line-height: 1.5;")
+        info_layout.addWidget(body)
+        scroll.setWidget(info_widget)
+
+        # Apply Button
+        apply_btn = QPushButton("APPLY NOW")
+        apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        apply_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6c5ce7; padding: 15px; 
+                border-radius: 10px; font-weight: bold; font-size: 14px;
+            }
+            QPushButton:hover { background-color: #5b4cc4; }
+        """)
+        apply_btn.clicked.connect(lambda: webbrowser.open(job.link))
+
+        layout.addWidget(title)
+        layout.addWidget(company)
+        layout.addWidget(scroll)
+        layout.addWidget(apply_btn)
+
+# --- 3. Main Application ---
+class CareerApp(QWidget):
     def __init__(self):
         super().__init__()
         self.cv_path = ""
         self.initUI()
-        
-        # Trigger the entrance animations after a tiny delay
-        QTimer.singleShot(100, self.start_entrance_animations)
 
     def initUI(self):
-        self.setWindowTitle("Career Portal")
-        self.setFixedSize(500, 650)
+        self.setWindowTitle("AI Career Portal")
+        self.setFixedSize(500, 700)
         
-        # 1. Background Style (Dark Modern Gradient)
-        self.setObjectName("MainWindow")
-        self.setStyleSheet("""
-            #MainWindow {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                                          stop:0 #0f0c29, stop:0.5 #302b63, stop:1 #24243e);
-            }
-            QLabel { color: white; }
-        """)
+        # Main Stacked Layout
+        self.stack = QStackedWidget(self)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.addWidget(self.stack)
+        self.main_layout.setContentsMargins(0,0,0,0)
 
-        # Main Layout
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(60, 80, 60, 80)
-        self.layout.setSpacing(10)
+        self.setup_input_page()
+        self.setup_loading_page()
+        self.setup_results_page()
 
-        # --- Creating Widgets ---
-        
-        # 2. Welcome Title
-        self.welcome_label = QLabel("Welcome.")
-        self.welcome_label.setFont(QFont("Inter", 38, QFont.Weight.Bold))
-        self.welcome_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.setStyleSheet("background: #0f0c29;")
 
-        self.sub_label = QLabel("Your future starts here.")
-        self.sub_label.setFont(QFont("Inter", 14))
-        self.sub_label.setStyleSheet("color: #a29bfe; margin-bottom: 30px;")
+    def setup_input_page(self):
+        self.input_page = QWidget()
+        layout = QVBoxLayout(self.input_page)
+        layout.setContentsMargins(50, 80, 50, 80)
 
-        # 3. Input Section
-        self.job_title = QLabel("WHAT IS YOUR DREAM JOB?")
-        self.job_title.setStyleSheet("font-size: 10px; font-weight: bold; color: #636e72; letter-spacing: 1px;")
-        
+        title = QLabel("Find your\nnext role.")
+        title.setFont(QFont("Inter", 36, QFont.Weight.Bold))
+        title.setStyleSheet("color: white;")
+
         self.job_input = QLineEdit()
-        self.job_input.setPlaceholderText("Enter job title...")
-        self.job_input.setStyleSheet("""
-            QLineEdit {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                padding: 15px;
-                color: white;
-                font-size: 16px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #6c5ce7;
-                background-color: rgba(255, 255, 255, 0.1);
-            }
-        """)
+        self.job_input.setPlaceholderText("Enter dream job title...")
+        self.job_input.setStyleSheet("padding: 15px; border-radius: 8px; background: #1a1a2e; color: white; border: 1px solid #302b63;")
 
-        # 4. Upload Section
-        self.upload_btn = QPushButton("📎 ATTACH CV")
-        self.upload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.upload_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                border: 2px solid #6c5ce7;
-                color: #a29bfe;
-                border-radius: 8px;
-                padding: 12px;
-                font-weight: bold;
-                margin-top: 20px;
-            }
-            QPushButton:hover {
-                background-color: rgba(108, 92, 231, 0.1);
-            }
-        """)
+        self.upload_btn = QPushButton("📎 ATTACH CV (PDF)")
+        self.upload_btn.setStyleSheet("border: 2px solid #6c5ce7; color: #a29bfe; padding: 12px; border-radius: 8px; font-weight: bold; margin-top: 10px;")
         self.upload_btn.clicked.connect(self.open_file_dialog)
 
-        self.file_status = QLabel("No file selected")
-        self.file_status.setStyleSheet("color: #636e72; font-size: 11px;")
-        self.file_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # 5. Submit Button
-        self.submit_btn = QPushButton("SEND APPLICATION")
-        self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.submit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #6c5ce7;
-                color: white;
-                border-radius: 8px;
-                padding: 18px;
-                font-size: 13px;
-                font-weight: bold;
-                margin-top: 30px;
-            }
-            QPushButton:hover { background-color: #5b4cc4; }
-        """)
+        self.submit_btn = QPushButton("FIND OPPORTUNITIES")
+        self.submit_btn.setStyleSheet("background: #6c5ce7; color: white; padding: 18px; border-radius: 8px; font-weight: bold; margin-top: 40px;")
         self.submit_btn.clicked.connect(self.submit_data)
 
-        # Adding widgets to layout
-        self.widgets = [
-            self.welcome_label, self.sub_label, 
-            self.job_title, self.job_input, 
-            self.upload_btn, self.file_status, 
-            self.submit_btn
-        ]
+        layout.addWidget(title)
+        layout.addSpacing(30)
+        layout.addWidget(self.job_input)
+        layout.addWidget(self.upload_btn)
+        layout.addStretch()
+        layout.addWidget(self.submit_btn)
+        self.stack.addWidget(self.input_page)
 
-        for w in self.widgets:
-            self.layout.addWidget(w)
-            # Set initial opacity to 0 for all widgets
-            op = QGraphicsOpacityEffect(w)
-            op.setOpacity(0)
-            w.setGraphicsEffect(op)
-
-        self.layout.addStretch()
-
-    def start_entrance_animations(self):
-        """Staggered fade-in and slide-up animation for all widgets"""
-        self.anim_group = []
+    def setup_loading_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        l1 = QLabel("🔍")
+        l1.setFont(QFont("Arial", 50))
+        l1.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        for i, widget in enumerate(self.widgets):
-            # 1. Opacity Animation
-            opacity_effect = widget.graphicsEffect()
-            anim = QPropertyAnimation(opacity_effect, b"opacity")
-            anim.setDuration(800)
-            anim.setStartValue(0)
-            anim.setEndValue(1)
-            anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-            
-            # Start animations with a delay for each widget (staggered)
-            QTimer.singleShot(i * 150, anim.start)
-            self.anim_group.append(anim) # Keep reference
+        self.load_text = QLabel("Analyzing Search Space...")
+        self.load_text.setFont(QFont("Inter", 16))
+        self.load_text.setStyleSheet("color: white;")
+        self.load_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        sub = QLabel("Running Hill Climbing & Tabu Search...")
+        sub.setStyleSheet("color: #636e72;")
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            # 2. Subtle Slide Up
-            pos_anim = QPropertyAnimation(widget, b"pos")
-            pos_anim.setDuration(800)
-            current_pos = widget.pos()
-            pos_anim.setStartValue(QPoint(current_pos.x(), current_pos.y() + 20))
-            pos_anim.setEndValue(current_pos)
-            pos_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-            
-            QTimer.singleShot(i * 150, pos_anim.start)
-            self.anim_group.append(pos_anim)
+        layout.addStretch()
+        layout.addWidget(l1)
+        layout.addWidget(self.load_text)
+        layout.addWidget(sub)
+        layout.addStretch()
+        self.stack.addWidget(page)
+
+    def setup_results_page(self):
+        self.results_page = QWidget()
+        self.res_layout = QVBoxLayout(self.results_page)
+        self.res_layout.setContentsMargins(30, 50, 30, 50)
+        
+        header = QLabel("Top Picks For You")
+        header.setFont(QFont("Inter", 22, QFont.Weight.Bold))
+        header.setStyleSheet("color: white; margin-bottom: 20px;")
+        
+        self.grid = QGridLayout()
+        self.grid.setSpacing(15)
+        
+        self.res_layout.addWidget(header)
+        self.res_layout.addLayout(self.grid)
+        self.res_layout.addStretch()
+        
+        back = QPushButton("← New Search")
+        back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        back.setStyleSheet("color: #636e72; background: transparent; border: none;")
+        self.res_layout.addWidget(back)
+        
+        self.stack.addWidget(self.results_page)
 
     def open_file_dialog(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "Select CV", "", "PDF (*.pdf);;Word (*.docx)")
+        fname, _ = QFileDialog.getOpenFileName(self, "Select CV", "", "PDF (*.pdf)")
         if fname:
             self.cv_path = fname
-            self.file_status.setText(f"SELECTED: {fname.split('/')[-1]}")
-            self.file_status.setStyleSheet("color: #00b894; font-weight: bold;")
+            self.upload_btn.setText("✅ CV ATTACHED")
 
     def submit_data(self):
         if not self.job_input.text() or not self.cv_path:
-            QMessageBox.critical(self, "Error", "Please fill in all fields.")
+            QMessageBox.warning(self, "Missing Info", "Please provide a job title and CV.")
             return
-        QMessageBox.information(self, "Done", "Information Received.")
+        
+        self.stack.setCurrentIndex(1)
+        self.worker = JobSearchWorker(self.job_input.text(), self.cv_path)
+        self.worker.finished.connect(self.display_results)
+        self.worker.start()
+
+    def display_results(self, results):
+        # Clear existing grid
+        while self.grid.count():
+            child = self.grid.takeAt(0)
+            if child.widget(): child.widget().deleteLater()
+
+        if not results:
+            self.grid.addWidget(QLabel("No jobs found matching your criteria."), 0, 0)
+        else:
+            for i, job in enumerate(results):
+                card = QFrame()
+                card.setFixedSize(210, 160)
+                card.setCursor(Qt.CursorShape.PointingHandCursor)
+                card.setStyleSheet("""
+                    QFrame { 
+                        background: rgba(255, 255, 255, 0.05); 
+                        border: 1px solid rgba(255, 255, 255, 0.1); 
+                        border-radius: 12px; 
+                    }
+                    QFrame:hover { background: rgba(108, 92, 231, 0.2); border: 1px solid #6c5ce7; }
+                """)
+                
+                c_layout = QVBoxLayout(card)
+                t = QLabel(job.title)
+                t.setWordWrap(True)
+                t.setFont(QFont("Inter", 11, QFont.Weight.Bold))
+                t.setStyleSheet("color: white; border: none; background: transparent;")
+                
+                c = QLabel(job.company)
+                c.setStyleSheet("color: #a29bfe; font-size: 10px; border: none; background: transparent;")
+                
+                c_layout.addWidget(t)
+                c_layout.addWidget(c)
+                
+                # Make clickable
+                card.mousePressEvent = lambda e, j=job: self.show_details(j)
+                
+                self.grid.addWidget(card, i // 2, i % 2)
+
+        self.stack.setCurrentIndex(2)
+
+    def show_details(self, job):
+        dialog = JobDetailDialog(job, self)
+        dialog.exec()
 
 if __name__ == '__main__':
-    # WSL Compatibility
     os.environ["QT_QPA_PLATFORM"] = "xcb"
-    
     app = QApplication(sys.argv)
-    window = AnimatedWelcomePage()
+    window = CareerApp()
     window.show()
     sys.exit(app.exec())

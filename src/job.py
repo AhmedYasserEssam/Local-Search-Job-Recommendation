@@ -22,6 +22,14 @@ class Job:
     skills: List[str] = field(default_factory=list)
     requirements: str = "N/A"
 
+    def __hash__(self):
+        return hash(self.link)
+
+    def __eq__(self, other):
+        if isinstance(other, Job):
+            return self.link == other.link
+        return False
+
     
 def parse_experience(exp_str: str) -> int:
     if not exp_str or exp_str == "N/A":
